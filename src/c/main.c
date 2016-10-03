@@ -24,14 +24,20 @@ Good luck and have fun!
 // Include Pebble library
 #include <pebble.h>
 
+#define ACCEL_SAMPLING_25HZ 25
+
 // Declare the main window and two text layers
 Window *main_window;
 TextLayer *background_layer;
 TextLayer *helloWorld_layer;
 
+static void accel_data_handler(AccelData*, uint32_t);
+
 // Init function called when app is launched
 static void init(void) {
-
+    //How many samples to store before calling the callback function
+    int num_samples = 25;
+    
   	// Create main Window element and assign to pointer
   	main_window = window_create();
     Layer *window_layer = window_get_root_layer(main_window);  
@@ -56,6 +62,12 @@ static void init(void) {
   
   	// Show the window on the watch, with animated = true
   	window_stack_push(main_window, true);
+  
+    // Allow accelerometer event
+    accel_data_service_subscribe(num_samples, accel_data_handler);
+    
+    //Define sampling rate
+    accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
     
     // Add a logging meassage (for debug)
 	  APP_LOG(APP_LOG_LEVEL_DEBUG, "Just write my first app!");
@@ -68,6 +80,18 @@ static void deinit(void) {
     text_layer_destroy(background_layer);
 	  text_layer_destroy(helloWorld_layer);
     window_destroy(main_window);
+}
+
+static void accel_data_handler(AccelData *data, uint32_t num_samples) {
+    int16_t x = data[0].x;
+    int16_t y = data[0].y;
+    int16_t z = data[0].z;
+    
+    static char results[60];
+    
+    APP_LOG(APP_LOG_LEVEL_INFO, "x:%d,y:%d,z:%d", x, y, z);
+    snprintf(results, 60, "x:%d;y:%d;z:%d", x, y, z);
+    text_layer_set_text(helloWorld_layer, results);
 }
 
 int main(void) {
