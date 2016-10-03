@@ -1,0 +1,24 @@
+{
+    "author": "flavien.bardyn@epfl.ch",
+    "dependencies": {},
+    "keywords": [],
+    "name": "tp-system-engineering",
+    "pebble": {
+        "displayName": "TP System Engineering",
+        "enableMultiJS": false,
+        "messageKeys": [],
+        "projectType": "native",
+        "resources": {
+            "media": []
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "aplite"
+        ],
+        "uuid": "62f781cf-0f5a-4218-b73c-a7e947933348",
+        "watchapp": {
+            "watchface": false
+        }
+    },
+    "version": "1.0.0"
+}
