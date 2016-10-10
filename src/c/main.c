@@ -23,8 +23,10 @@ Good luck and have fun!
 
 // Include Pebble library
 #include <pebble.h>
+#include "src/c/kiss_fft.h"
 
 #define ACCEL_SAMPLING_25HZ 25
+#define NBSAMPLE 100
 
 // Declare the main window and two text layers
 Window *main_window;
@@ -32,6 +34,9 @@ TextLayer *background_layer;
 TextLayer *helloWorld_layer;
 
 static void accel_data_handler(AccelData*, uint32_t);
+static int16_t values[NBSAMPLE];
+
+  
 
 // Init function called when app is launched
 static void init(void) {
@@ -88,6 +93,15 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     int16_t z = data[0].z;
     
     static char results[60];
+    static int16_t i=0;
+  
+    if(values[i]==0 && i<NBSAMPLE){
+        values[i]=x;
+        i++;
+    }
+    else{
+        
+    }
     
     APP_LOG(APP_LOG_LEVEL_INFO, "x:%d,y:%d,z:%d", x, y, z);
     snprintf(results, 60, "x:%d;y:%d;z:%d", x, y, z);
