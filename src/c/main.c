@@ -23,10 +23,13 @@ Good luck and have fun!
 
 // Include Pebble library
 #include <pebble.h>
-#include "src/c/kiss_fft.h"
+#include "src/c/kiss_fftr.h"
 
 #define ACCEL_SAMPLING_25HZ 25
-#define NBSAMPLE 100
+#define NBSAMPLE 18
+#define NFFT 144
+#define SCR_WIDTH 144
+#define SCR_HEIGHT 168
 
 // Declare the main window and two text layers
 Window *main_window;
@@ -36,46 +39,53 @@ TextLayer *helloWorld_layer;
 static void accel_data_handler(AccelData*, uint32_t);
 static int16_t values[NBSAMPLE];
 
+Layer * graph_layer;
+uint32_t accel[NFFT];
+uint32_t bigBuffer[NFFT];
+static GPoint points[NFFT];
+
+// .update_proc of my_layer:
+void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
+    GPathInfo path_info = {
+        .num_points = NFFT,
+        .points = points
+    };
+    GPath *path = gpath_create(&path_info);
+    
+    graphics_context_set_stroke_color(ctx, GColorBlack);
+    gpath_draw_outline_open(ctx, path);
+    gpath_destroy(path);
+}
   
 
 // Init function called when app is launched
 static void init(void) {
     //How many samples to store before calling the callback function
-    int num_samples = 25;
+    int num_samples = NBSAMPLE;
     
   	// Create main Window element and assign to pointer
   	main_window = window_create();
     Layer *window_layer = window_get_root_layer(main_window);  
+    
+    // Create graph layer
+    graph_layer = layer_create(GRect(0, 0, 144, 168));    
+    layer_set_update_proc(graph_layer, graph_layer_update_proc);   
+    layer_add_child(window_layer, graph_layer);
 
-		// Create background Layer
-		background_layer = text_layer_create(GRect( 0, 0, 144, 168));
-		// Setup background layer color (black)
-		text_layer_set_background_color(background_layer, GColorBlack);
-
-		// Create text Layer
-		helloWorld_layer = text_layer_create(GRect( 20, 65, 100, 20));
-		// Setup layer Information
-		text_layer_set_background_color(helloWorld_layer, GColorClear);
-		text_layer_set_text_color(helloWorld_layer, GColorWhite);	
-		text_layer_set_font(helloWorld_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
-  	text_layer_set_text_alignment(helloWorld_layer, GTextAlignmentCenter);
-    text_layer_set_text(helloWorld_layer, "Hi, I'm a Pebble!");
-
-  	// Add layers as childs layers to the Window's root layer
-    layer_add_child(window_layer, text_layer_get_layer(background_layer));
-	  layer_add_child(window_layer, text_layer_get_layer(helloWorld_layer));
-  
+    
   	// Show the window on the watch, with animated = true
   	window_stack_push(main_window, true);
   
     // Allow accelerometer event
-    accel_data_service_subscribe(num_samples, accel_data_handler);
+    accel_data_service_subscribe(NBSAMPLE, accel_data_handler);
     
     //Define sampling rate
     accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
     
+    memset(points, SCR_HEIGHT / 2,  sizeof(points));
+    
     // Add a logging meassage (for debug)
-	  APP_LOG(APP_LOG_LEVEL_DEBUG, "Just write my first app!");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Just write my first app!");
 }
 
 // deinit function called when the app is closed
@@ -83,29 +93,38 @@ static void deinit(void) {
   
     // Destroy layers and main window 
     text_layer_destroy(background_layer);
-	  text_layer_destroy(helloWorld_layer);
+    text_layer_destroy(helloWorld_layer);
     window_destroy(main_window);
 }
 
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
-    int16_t x = data[0].x;
-    int16_t y = data[0].y;
-    int16_t z = data[0].z;
-    
-    static char results[60];
-    static int16_t i=0;
-  
-    if(values[i]==0 && i<NBSAMPLE){
-        values[i]=x;
-        i++;
+    uint32_t max = 0, min = 0;
+    for(uint32_t i = 0; i < num_samples && i < NBSAMPLE; i++){
+        accel[i] = data[i].x * data[i].x + data[i].y * data[i].y + data[i].z * data[i].z;
+        if(max == 0 || max < accel[i]){
+            max = accel[i];
+        }
+        if(min == 0 || min > accel[i]){
+            min = accel[i];
+        }
     }
-    else{
         
+    // Shift points NBSAMPLE to the left
+    memmove(points, &(points[NBSAMPLE]), sizeof(GPoint) * NFFT);
+    
+    //Normalize (max: 168)
+    for(uint32_t i = 0; i < NFFT; i++){
+        // Bound accel data to screen
+        //if(i < NBSAMPLE)
+            //accel[i] = data[i].x * 0.05 + SCR_HEIGHT / 2;
+        
+        // Compute points x and y
+        points[i].x = i;
+        if(i >= NFFT - NBSAMPLE)
+            points[i].y = data[i].x * 0.05 + SCR_HEIGHT / 2;
     }
     
-    APP_LOG(APP_LOG_LEVEL_INFO, "x:%d,y:%d,z:%d", x, y, z);
-    snprintf(results, 60, "x:%d;y:%d;z:%d", x, y, z);
-    text_layer_set_text(helloWorld_layer, results);
+    layer_mark_dirty(graph_layer);
 }
 
 int main(void) {
