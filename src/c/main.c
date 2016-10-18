@@ -43,6 +43,7 @@ Layer * graph_layer;
 uint32_t accel[NFFT];
 uint32_t bigBuffer[NFFT];
 static GPoint points[NFFT];
+static uint32_t max = 0, min = 0;
 
 // .update_proc of my_layer:
 void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
@@ -98,7 +99,6 @@ static void deinit(void) {
 }
 
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
-    uint32_t max = 0, min = 0;
     for(uint32_t i = 0; i < num_samples && i < NBSAMPLE; i++){
         accel[i] = data[i].x * data[i].x + data[i].y * data[i].y + data[i].z * data[i].z;
         if(max == 0 || max < accel[i]){
@@ -113,17 +113,13 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     memmove(points, &(points[NBSAMPLE]), sizeof(GPoint) * NFFT);
     
     //Normalize (max: 168)
-    for(uint32_t i = 0; i < NFFT; i++){
-        // Bound accel data to screen
-        //if(i < NBSAMPLE)
-            //accel[i] = data[i].x * 0.05 + SCR_HEIGHT / 2;
-        
+    for(uint32_t i = 0; i < NFFT; i++){        
         // Compute points x and y
         points[i].x = i;
         if(i >= NFFT - NBSAMPLE)
-            points[i].y = data[i].x * 0.05 + SCR_HEIGHT / 2;
+            points[i].y = SCR_HEIGHT - (accel[i + NBSAMPLE - NFFT ] - min) * SCR_HEIGHT/ (max-min) * 0.95;
     }
-    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "%lu; %lu - %lu = %lu; %lu", accel[0] - min, max, min, max - min,  (accel[0] - min) * SCR_HEIGHT/ (max-min));
     layer_mark_dirty(graph_layer);
 }
 
