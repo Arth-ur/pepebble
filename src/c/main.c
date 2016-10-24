@@ -26,8 +26,8 @@ Good luck and have fun!
 #include "src/c/kiss_fftr.h"
 
 #define ACCEL_SAMPLING_25HZ 25
-#define NBSAMPLE 18
-#define NFFT 144
+#define NBSAMPLE 16
+#define NFFT 1024
 #define SCR_WIDTH 144
 #define SCR_HEIGHT 168
 
@@ -42,13 +42,15 @@ static int16_t values[NBSAMPLE];
 Layer * graph_layer;
 uint32_t accel[NFFT];
 uint32_t bigBuffer[NFFT];
-static GPoint points[NFFT];
+static GPoint points[SCR_WIDTH];
+static uint32_t fftSamples[NFFT];
 static uint32_t max = 0, min = 0;
 
 // .update_proc of my_layer:
 void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Entering graph layer update proc");
     GPathInfo path_info = {
-        .num_points = NFFT,
+        .num_points = SCR_WIDTH,
         .points = points
     };
     GPath *path = gpath_create(&path_info);
@@ -99,6 +101,7 @@ static void deinit(void) {
 }
 
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Entering accel data handler");
     for(uint32_t i = 0; i < num_samples && i < NBSAMPLE; i++){
         accel[i] = data[i].x * data[i].x + data[i].y * data[i].y + data[i].z * data[i].z;
         if(max == 0 || max < accel[i]){
@@ -110,16 +113,26 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     }
         
     // Shift points NBSAMPLE to the left
-    memmove(points, &(points[NBSAMPLE]), sizeof(GPoint) * NFFT);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Moving points memory");
+    memmove(points, &(points[NBSAMPLE]), sizeof(GPoint) * SCR_WIDTH);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Moving samples memory");
+    memmove(fftSamples, &(fftSamples[NBSAMPLE]), sizeof(uint32_t) * NFFT);
     
     //Normalize (max: 168)
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Normalizing");
     for(uint32_t i = 0; i < NFFT; i++){        
         // Compute points x and y
-        points[i].x = i;
-        if(i >= NFFT - NBSAMPLE)
-            points[i].y = SCR_HEIGHT - (accel[i + NBSAMPLE - NFFT ] - min) * SCR_HEIGHT/ (max-min) * 0.95;
+        if(i >= NFFT - NBSAMPLE){
+            fftSamples[i] = accel[i + NBSAMPLE - NFFT];
+        }
+        if(i < SCR_WIDTH){
+            points[i].x = i;
+            if(i >= SCR_WIDTH - NBSAMPLE){
+                points[i].y = SCR_HEIGHT - (accel[i + NBSAMPLE - SCR_WIDTH ] - min) * SCR_HEIGHT / (max-min) * 0.95 - 0.05 * SCR_HEIGHT;
+            }
+        }
     }
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "%lu; %lu - %lu = %lu; %lu", accel[0] - min, max, min, max - min,  (accel[0] - min) * SCR_HEIGHT/ (max-min));
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "Dirty layer");
     layer_mark_dirty(graph_layer);
 }
 
