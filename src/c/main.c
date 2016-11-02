@@ -30,10 +30,10 @@ Good luck and have fun!
 #include "src/c/integer_fft.js"
 
 #define ACCEL_SAMPLING_25HZ 25
+#define WALK_MAX_FREQ 1
 #define NBSAMPLE 16
 // NFFT in {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}
-#define MFFT 10
-#define NFFT (1 << 10)
+#define NFFT 128
 #define SCR_WIDTH 144
 #define SCR_HEIGHT 168
 
@@ -49,14 +49,13 @@ Layer * graph_layer;
 uint32_t accel[NBSAMPLE];
 uint32_t bigBuffer[NFFT];
 static GPoint points[SCR_WIDTH];
-static GPoint fftpoints[SCR_WIDTH];
-static short fftSamples[NFFT];
-static short fftr[NFFT];
-static short ffti[NFFT];
-static short fftmag[NFFT];
+static GPoint fftpoints[6];
+static uint32_t fftSamples[NFFT];
 static uint32_t max = 0, min = 0;
 static short fftn = 0;
 static uint32_t total_steps = 0;
+uint32_t last = 0;
+uint32_t last_peak_time = -1;
 #define SSTEPS_SIZE 24
 char* ssteps;
 
@@ -74,7 +73,7 @@ static void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
     gpath_destroy(path);
     
     
-    path_info.num_points = SCR_WIDTH;
+    path_info.num_points = 6;
     path_info.points = fftpoints;
     path = gpath_create(&path_info);
     
@@ -116,12 +115,8 @@ static void init(void) {
     //Define sampling rate
     accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
     
-    memset(fftSamples, 0,  sizeof(fftr));
-    memset(fftr, 0,  sizeof(fftr));
-    memset(ffti, 0,  sizeof(fftr));
+    memset(fftSamples, 0,  sizeof(fftSamples));
     
-    // Add a logging meassage (for debug)
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Just write my first app!");
 }
 
 // deinit function called when the app is closed
@@ -136,10 +131,12 @@ static void deinit(void) {
 }
 
 float my_sqrt(float num){
+    const uint8_t MAX_STEP = 40;
+    uint8_t i = 0;
     float a, p, e = 0.001, b;
     a = num;
     p = a * a;
-    while( p - num >= e ){
+    while( p - num >= e && (i++ < MAX_STEP) ){
         b = ( a + ( num / a ) ) / 2;
         a = b;
         p = a * a;
@@ -147,7 +144,38 @@ float my_sqrt(float num){
     return a;
 }
 
+double xv[3];
+double yv[3];
 
+void filter(uint32_t* samples, int count)
+{
+   double ax[3] = {0.198215, 0.396430, 0.198215};
+    double by[3] = {1, -2.22693, 2.019794};
+
+//   getLPCoefficientsButterworth2Pole(25, 100, ax, by);
+
+   for (int i=0;i<count;i++)
+   {
+       xv[2] = xv[1]; xv[1] = xv[0];
+       xv[0] = samples[i];
+       yv[2] = yv[1]; yv[1] = yv[0];
+
+       yv[0] =   (ax[0] * xv[0] + ax[1] * xv[1] + ax[2] * xv[2]
+                    - by[1] * yv[0]
+                    - by[2] * yv[1]);
+
+       samples[i] = yv[0];
+   }
+}
+int compar (const void* a, const void* b){
+      if ( *(int16_t*)a <  *(int16_t*)b ) return -1;
+      if ( *(int16_t*)a == *(int16_t*)b ) return 0;
+      if ( *(int16_t*)a >  *(int16_t*)b ) return 1;
+    return 0;
+}
+
+        int last_time_peak = -1;
+        int spree = 0;
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     for(uint32_t i = 0; i < NBSAMPLE; i++){
         accel[i] = data[i].x * data[i].x + data[i].y * data[i].y + data[i].z * data[i].z;
@@ -160,9 +188,10 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     }
         
     // Shift points NBSAMPLE to the left
+    uint32_t old = fftSamples[NFFT - NBSAMPLE];
     memmove(points, &(points[NBSAMPLE]), sizeof(points));
     memmove(fftSamples, &(fftSamples[NBSAMPLE]), sizeof(fftSamples));
-    
+        
     //Normalize (max: 168)
     //short smax = max * 32768.0 * 2.0 / 4294967296.0; // - 32768;
     //short smin = min * 32768.0 * 2.0 / 4294967296.0; // - 32768;
@@ -170,10 +199,17 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
    // APP_LOG(APP_LOG_LEVEL_DEBUG, "max %lu -> %d min %lu -> %d", max, smax, min, smin);
     
     // Add data
+    double RC = 100.0/(1*2*3.14); 
+    double dt = 1.0/25; 
+    double alpha = 7;
+   // filter(accel, NBSAMPLE);
     for (uint32_t i = 0; i < NBSAMPLE; i++){
      //   APP_LOG(APP_LOG_LEVEL_DEBUG, "SEGFAULT %lu %lu", NFFT - (NBSAMPLE - i) - 1, SCR_WIDTH - (NBSAMPLE - i) - 1);
-        fftSamples[NFFT - (NBSAMPLE - i)] = accel[i] * 32768.0 * 2.0 / 4294967296.0 * 10;
-        points[SCR_WIDTH - (NBSAMPLE - i)].y = SCR_HEIGHT - accel[i] * 32768.0 * 2.0 / 4294967296.0;
+        // y[i] := ß * x[i] + (1-ß) * y[i-1]
+        last = 0;
+        fftSamples[NFFT - (NBSAMPLE - i)] = accel[i] + last; // * 32768.0 * 2.0 / 4294967296.0 * 10;
+        last = accel[i];
+        points[SCR_WIDTH - (NBSAMPLE - i)].y = SCR_HEIGHT - fftSamples[NFFT - (NBSAMPLE - i)] * 32768.0 * 2.0 / 4294967296.0;
     }
     
     // Shift points
@@ -185,71 +221,94 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     fftn += NBSAMPLE;
     
     // if 1024 samples have been collected
-    if(fftn >= 1024){
-        // Copy fftsamples to fftr
-        memcpy(fftr, fftSamples, sizeof(fftSamples));
+    if(fftn >= NFFT){
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "Entering 8s");
+        #define MAX_COUNT 30
+        int16_t maxIndex [MAX_COUNT];
+        uint16_t nbIndex=0;
+        memset(maxIndex, -1, sizeof(maxIndex));
+        uint32_t mean=0, sigma=0, sum=0,ssum=0;
         
-        // Perform FFT
-        fix_fft(fftr, ffti, MFFT, 0);
-        
-        // Compute magnitude, find max, compute sigma and mu
-        short max_fftr = 0;
-        uint32_t xsum = 0, x2sum = 0; // sum and sum of sqaure
-        for(uint32_t i = 1; i < NFFT/2; i++){
-            fftr[i] = fftr[i] * fftr[i] + ffti[i] * ffti[i];
-            xsum += fftr[i];
-            x2sum += fftr[i] * fftr[i];
-            if(fftr[i] > max_fftr){
-                max_fftr = fftr[i];
-            }
-        }
-        
-        // Compute mean and variance
-        short mean = xsum * 2 / NFFT;
-        short sigma = (short) my_sqrt((x2sum - xsum*xsum/(NFFT/2))/((NFFT/2) + 1));
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "max=%d mu=%d s=%d sum=%lu ssum=%lu", max_fftr, mean, sigma, xsum, x2sum);
-        
-        // Remove all frequencies below mean+sigma (~70% of frequencies);
-        for(uint32_t i = 1; i < NFFT/2; i++){
-            if(fftr[i] < mean + sigma){
-                fftr[i] = 0;
-            }
-        }
-        
-        // Show points
-        for(uint32_t i = 0; i < SCR_WIDTH; i++){
-            short max_mag = 0;
-            for(uint32_t j = i * 4; j < (i + 1) * 4 && j < NFFT / 2; j++){
-                if(fftr[j] > max_mag){
-                    max_mag = fftr[j];
+        for(short i = 0; i < MAX_COUNT; i++){
+            for(short j = 0; j < NFFT; j++){
+                if((fftSamples[j] > 1500000) && ((maxIndex[i] == -1) || (fftSamples[maxIndex[i]] < fftSamples[j]))){
+                    int8_t tooClose = 0;
+                    for(short k = 0; k < i; k++){
+                        if((j > maxIndex[k] - 3 && j < maxIndex[k] + 3)){
+                            tooClose = 1;
+                        }
+                    }
+                    if(!tooClose){
+                        maxIndex[i] = j;
+                    }
                 }
             }
-            fftpoints[i].x = i;
-            fftpoints[i].y = max_mag * SCR_HEIGHT * 0.5 / max_fftr;
-        }
-        
-        // Find the max frequency between 1.5Hz and 2.5Hz
-        short max2i = 0;
-        for(short i = 61; i < 103; i++){
-            if(fftr[i] > fftr[max2i]){
-                max2i = i;
+            if(maxIndex[i] > -1){
+               // APP_LOG(APP_LOG_LEVEL_DEBUG, "%d %d %lu", i, maxIndex[i], fftSamples[maxIndex[i]]);
+                sum += fftSamples[maxIndex[i]];
+                ssum += fftSamples[maxIndex[i]]*fftSamples[maxIndex[i]];
+                nbIndex +=1;
             }
         }
-        if(max2i > 61){
-            float max2Hz = max2i * 0.0244140625;
-            short steps = max2Hz * 40.96;
         
-            APP_LOG(APP_LOG_LEVEL_DEBUG, "max fq=%fHz (i=%d) (|%d|) ======> %d steps", max2Hz, max2i, fftr[max2i], steps);
-            total_steps += steps;
-            snprintf(ssteps, SSTEPS_SIZE, "%lu (+%d)", total_steps, steps);
-            text_layer_set_text(helloWorld_layer, ssteps);
-        }else{
-            APP_LOG(APP_LOG_LEVEL_DEBUG, "NO STEPS");
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "nbIndex %u", nbIndex);
+        
+        mean = sum / nbIndex;
+        sigma = my_sqrt((ssum-(sum*sum))/(nbIndex-1));
+        sigma = 100000;
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "sum %lu mean %lu mean+sigma %lu mean-sigma %lu sigma %lu", sum, mean, mean+sigma, mean-sigma, sigma);
+        
+        // sort index
+        qsort(maxIndex, nbIndex, sizeof(int16_t), compar);
+        
+        // select only some of the peaks, and compute the distance between each peaks.
+        for(int i = 0; i < nbIndex; i++){
+            if(maxIndex[i] > -1 && fftSamples[maxIndex[i]]<(mean+sigma * 10) && fftSamples[maxIndex[i]]>(mean-sigma * 10)){
+                if(last_time_peak > 0){
+                    int distance =  maxIndex[i] - last_time_peak;
+                    const int cost = 3;
+                    APP_LOG(APP_LOG_LEVEL_DEBUG, "DISTANCE %d %d", distance, spree);
+                    if(distance >= 4 && distance <= 30){
+                        spree += 1 * cost;
+                    }
+                    else if(spree > 0){
+                        spree -= 1;
+                    }
+                    
+                    if(spree >= 3 * cost){
+                        spree = 0;
+                        total_steps += 3;
+                        
+                        APP_LOG(APP_LOG_LEVEL_DEBUG, "STEP SPREE");    
+                    }
+                }
+                last_time_peak = maxIndex[i];
+            }
         }
+        last_time_peak = last_time_peak - NFFT;
         
+        snprintf(ssteps, SSTEPS_SIZE, "%lu", total_steps);
+        text_layer_set_text(helloWorld_layer, ssteps);
         fftn = 0;
-        //vibes_short_pulse();
+        fftpoints[0].x = 0;
+        fftpoints[1].x = SCR_WIDTH;
+        fftpoints[2].x = SCR_WIDTH;
+        fftpoints[3].x = 0;
+        fftpoints[4].x = 0;
+        fftpoints[5].x = SCR_WIDTH;
+        fftpoints[0].y = fftpoints[1].y = SCR_HEIGHT - (mean + sigma) * 32768.0 * 2.0 / 4294967296.0;
+        fftpoints[2].y = fftpoints[3].y = SCR_HEIGHT - mean * 32768.0 * 2.0 / 4294967296.0;
+        fftpoints[4].y = fftpoints[5].y = SCR_HEIGHT - (mean - sigma) * 32768.0 * 2.0 / 4294967296.0;
+        fftn = 0; 
     }
+    
+    // Add data
+    /*for (uint32_t i = 0; i < NBSAMPLE; i++){
+     //   APP_LOG(APP_LOG_LEVEL_DEBUG, "SEGFAULT %lu %lu", NFFT - (NBSAMPLE - i) - 1, SCR_WIDTH - (NBSAMPLE - i) - 1);
+        fftSamples[NFFT - (NBSAMPLE - i)] = accel[i] * 32768.0 * 2.0 / 4294967296.0 * 10;
+        points[SCR_WIDTH - (NBSAMPLE - i)].y = SCR_HEIGHT - accel[i] * 32768.0 * 2.0 / 4294967296.0;
+    }*/
+    // Dirty layer
     layer_mark_dirty(graph_layer);
 }
 
