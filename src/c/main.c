@@ -29,14 +29,14 @@ Good luck and have fun!
 // so we use the '.js' extension.
 #include "src/c/integer_fft.js"
 
-#define ACCEL_SAMPLING_25HZ 25
+#define ACCEL_SAMPLING_FREQUENCY ACCEL_SAMPLING_100HZ
 #define NBSAMPLE 16
 // NFFT in {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}
 #define MFFT 10
 #define NFFT (1 << 10)
 #define SCR_WIDTH 144
 #define SCR_HEIGHT 168
-
+#define ABS(x) ((x) < 0 ? -(x) : (x))
 // Declare the main window and two text layers
 Window *main_window;
 TextLayer *background_layer;
@@ -114,7 +114,7 @@ static void init(void) {
     accel_data_service_subscribe(NBSAMPLE, accel_data_handler);
     
     //Define sampling rate
-    accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
+    accel_service_set_sampling_rate(ACCEL_SAMPLING_FREQUENCY);
     
     memset(fftSamples, 0,  sizeof(fftr));
     memset(fftr, 0,  sizeof(fftr));
@@ -139,7 +139,9 @@ float my_sqrt(float num){
     float a, p, e = 0.001, b;
     a = num;
     p = a * a;
-    while( p - num >= e ){
+    const int MAX = 40;
+    int nb = 0;
+    while( p - num >= e && nb++ < MAX ){
         b = ( a + ( num / a ) ) / 2;
         a = b;
         p = a * a;
@@ -147,6 +149,27 @@ float my_sqrt(float num){
     return a;
 }
 
+
+        
+typedef struct {
+    int count;
+    int centroid;
+}C_cluster;
+
+int comparC_cluster(const void* a, const void* b){
+    int c = 0;
+    if ( ((C_cluster*)a)->centroid <  ((C_cluster*)b)->centroid ) c = -1;
+    if ( ((C_cluster*)a)->centroid == ((C_cluster*)b)->centroid ) c = 0;
+    if ( ((C_cluster*)a)->centroid >  ((C_cluster*)b)->centroid ) c = 1;
+    return -c;
+}
+
+int compar (const void* a, const void* b){
+      if ( *(int16_t*)a <  *(int16_t*)b ) return -1;
+      if ( *(int16_t*)a == *(int16_t*)b ) return 0;
+      if ( *(int16_t*)a >  *(int16_t*)b ) return 1;
+    return 0;
+}
 
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     for(uint32_t i = 0; i < NBSAMPLE; i++){
@@ -207,7 +230,7 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
         // Compute mean and variance
         short mean = xsum * 2 / NFFT;
         short sigma = (short) my_sqrt((x2sum - xsum*xsum/(NFFT/2))/((NFFT/2) + 1));
-        APP_LOG(APP_LOG_LEVEL_DEBUG, "max=%d mu=%d s=%d sum=%lu ssum=%lu", max_fftr, mean, sigma, xsum, x2sum);
+        //APP_LOG(APP_LOG_LEVEL_DEBUG, "max=%d mu=%d s=%d sum=%lu ssum=%lu", max_fftr, mean, sigma, xsum, x2sum);
         
         // Remove all frequencies below mean+sigma (~70% of frequencies);
         for(uint32_t i = 1; i < NFFT/2; i++){
@@ -230,23 +253,168 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
         
         // Find the max frequency between 1.5Hz and 2.5Hz
         short max2i = 0;
-        for(short i = 61; i < 103; i++){
+        //for(short i = 1.5 * NFFT / 100.0; i < 2.5 * NFFT / 100.0; i++){
+        for(short i = 0; i < NFFT; i++){
             if(fftr[i] > fftr[max2i]){
                 max2i = i;
             }
         }
-        if(max2i > 61){
-            float max2Hz = max2i * 0.0244140625;
-            short steps = max2Hz * 40.96;
         
-            APP_LOG(APP_LOG_LEVEL_DEBUG, "max fq=%fHz (i=%d) (|%d|) ======> %d steps", max2Hz, max2i, fftr[max2i], steps);
-            total_steps += steps;
-            snprintf(ssteps, SSTEPS_SIZE, "%lu (+%d)", total_steps, steps);
-            text_layer_set_text(helloWorld_layer, ssteps);
-        }else{
-            APP_LOG(APP_LOG_LEVEL_DEBUG, "NO STEPS");
+        float max2Hz = 0;
+        float walktime = 0;      
+        short steps = 0;
+        
+        int peakNSup = 0;
+        if(max2i >  1 * NFFT / ACCEL_SAMPLING_FREQUENCY && max2i <  3 * NFFT / ACCEL_SAMPLING_FREQUENCY){
+            // Find the walking time
+            // Find maximums
+            #define MAX_COUNT 30
+            int16_t maxIndex [MAX_COUNT];
+            uint16_t nbIndex=0;
+            memset(maxIndex, -1, sizeof(maxIndex));
+            int32_t mean2=0, sigma2=0, sum2=0,ssum2=0;
+            
+            for(short i = 0; i < MAX_COUNT; i++){
+                for(short j = 0; j < NFFT; j++){
+                    if((fftSamples[j] > 200) && ((maxIndex[i] == -1) || (fftSamples[maxIndex[i]] < fftSamples[j]))){
+                        int8_t tooClose = 0;
+                        for(short k = 0; k < i; k++){
+                            if((j > maxIndex[k] - 14 && j < maxIndex[k] + 14)){
+                                tooClose = 1;
+                            }
+                        }
+                        if(!tooClose){
+                            maxIndex[i] = j;
+                        }
+                    }
+                }
+                if(maxIndex[i] > -1){
+                   // APP_LOG(APP_LOG_LEVEL_DEBUG, "%d %d %lu", i, maxIndex[i], fftSamples[maxIndex[i]]);
+                    sum2 += fftSamples[maxIndex[i]];
+                    ssum2 += fftSamples[maxIndex[i]]*fftSamples[maxIndex[i]];
+                    nbIndex +=1;
+                }
+                
+            }
+            
+         //   mean2 = sum2 / nbIndex;
+         //   sigma2 = my_sqrt((ssum2-(sum2*sum2))/(nbIndex-1));
+         //   sigma2 = 100000;
+            //APP_LOG(APP_LOG_LEVEL_DEBUG, "sum %lu mean %lu mean+sigma %lu mean-sigma %lu sigma %lu", sum, mean, mean2+sigma, mean-sigma, sigma);
+            
+            // clustering
+            #define CENTROID_COUNT 4
+            #define C_MAX_ITERATION_COUNT 20
+            int centroids [CENTROID_COUNT];    // 4 clusters
+            // initialize centroids:
+            for (int i = 0; i < CENTROID_COUNT; i++){
+                centroids[i] = fftSamples[maxIndex[nbIndex / CENTROID_COUNT * i]];
+                APP_LOG(APP_LOG_LEVEL_DEBUG, "Init centroid {%d} to [%d] [%d] %d", i, nbIndex / CENTROID_COUNT * i, maxIndex[nbIndex / CENTROID_COUNT * i], centroids[i]);
+            }
+            
+            // sort index
+            qsort(maxIndex, nbIndex, sizeof(int16_t), compar);
+            
+            int c_iteration_count = 0;
+            int c_changed = 0;
+            int c_cluster [nbIndex];
+            int c_sum [CENTROID_COUNT];
+            int c_count[CENTROID_COUNT];
+            C_cluster c_output[CENTROID_COUNT];
+            do{
+                // Compute distance to each centroid
+                int c_distance[CENTROID_COUNT][nbIndex];
+                memset(c_distance, 0, sizeof(c_distance));
+                for(int i = 0; i < CENTROID_COUNT; i++){
+                    // Reset distances
+                    for(int j = 0; j < nbIndex; j++){
+                        c_distance[i][j] = ABS(centroids[i] - fftSamples[maxIndex[j]]);
+                    }
+                }
+                
+                // Assign to cluster
+                memset(c_cluster, -1, sizeof(c_cluster));
+                for(int i = 0; i < nbIndex; i++){
+                    int min_distance = -1;
+                    int assign_to_cluster = 0;
+                    for(int j = 0; j < CENTROID_COUNT; j++){
+                        if(min_distance < 0 || c_distance[j][i] < min_distance){
+                            //APP_LOG(APP_LOG_LEVEL_DEBUG, "%d < %d => {%d}", c_distance[j][i], min_distance, j );
+                            assign_to_cluster = j;
+                            min_distance = c_distance[j][i];
+                        }
+                    }
+                    //APP_LOG(APP_LOG_LEVEL_DEBUG, "maxindex [%d] assigned to cluster cluster {%d} with distance %d", i, assign_to_cluster, c_distance[assign_to_cluster][i]);
+                    c_cluster[i] = assign_to_cluster;
+                }
+                
+                // Compute centroids
+                memset(c_sum, 0, sizeof(c_sum));
+                memset(c_count, 0, sizeof(c_count));
+                for(int i = 0; i < nbIndex; i++){
+                    int assigned_cluster = c_cluster[i];
+                    c_sum[assigned_cluster] += fftSamples[maxIndex[i]];
+                    c_count[assigned_cluster] += 1;
+                    //APP_LOG(APP_LOG_LEVEL_DEBUG, "[%d] %d {%d}", i, fftSamples[maxIndex[i]], assigned_cluster);
+                }
+                c_changed = 0;
+                for(int i = 0; i < CENTROID_COUNT; i++){
+                    int new_centroid = c_sum[i] / c_count[i];
+                    if(new_centroid != centroids[i]){
+                        c_changed = 1;
+                    }
+                    centroids[i] = new_centroid;
+                    C_cluster my_cluster = {
+                        .count = c_count[i],
+                        .centroid = centroids[i]
+                    };
+                    c_output[i] = my_cluster;
+                    //APP_LOG(APP_LOG_LEVEL_DEBUG, "Recompute centroid {%d} to %d, (%d assigned)", i, new_centroid, c_count[i]);
+                }
+                
+                if(c_iteration_count++ > C_MAX_ITERATION_COUNT){
+                    APP_LOG(APP_LOG_LEVEL_DEBUG, "max iteration count C_MAX_ITERATION_COUNT reached");
+                    break;
+                }
+            }while(c_changed);
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "Clustering: done in %d iterations", c_iteration_count);
+            
+            // Count assigned peak in the highest clusters
+            qsort(c_output, CENTROID_COUNT, sizeof(C_cluster), comparC_cluster);
+            peakNSup = 0;
+            for(int i = 0; i < CENTROID_COUNT; i++){
+                if(c_output[i].centroid >= 250 && i < CENTROID_COUNT - 1)
+                    peakNSup += c_output[i].count;
+                APP_LOG(APP_LOG_LEVEL_DEBUG, "Cluster {%d} %d [=%d]", i, c_output[i].centroid, c_output[i].count);
+            }
+            
+            // select only some of the peaks, and compute the distance between each peaks.
+          /*  for(int i = 0; i < nbIndex; i++){
+                if(maxIndex[i] > -1 && fftSamples[maxIndex[i]]<(mean2+sigma2 * 10) && fftSamples[maxIndex[i]]>(mean2-sigma2 * 10)){
+                    peakNSup ++;
+                    if(max2i > 0){
+                        APP_LOG(APP_LOG_LEVEL_DEBUG, "[%d] %d {%d}", maxIndex[i], fftSamples[maxIndex[i]],  c_cluster[i]);
+                    }
+                }
+            }*/        
+            
+             max2Hz = max2i * ACCEL_SAMPLING_FREQUENCY / NFFT;
+             walktime = peakNSup / max2Hz;      
+             steps = max2Hz * walktime;    
+            if(max2Hz < 1e-8){
+                walktime = 0;
+            }
+            
+            #define END_SPRINTF "%lu(%d/%d+%d=%d(%d|%d", total_steps, max2i, (int)(max2Hz*10), steps, peakNSup, (int) walktime, fftr[max2i]
+            if(max2i > 1.5 * NFFT / ACCEL_SAMPLING_FREQUENCY){
+                total_steps += peakNSup;
+                text_layer_set_text(helloWorld_layer, ssteps);
+            }
+            APP_LOG(APP_LOG_LEVEL_DEBUG, END_SPRINTF);
+
         }
-        
+        snprintf(ssteps, SSTEPS_SIZE, END_SPRINTF);
+
         fftn = 0;
         //vibes_short_pulse();
     }
