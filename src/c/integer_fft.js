@@ -65,7 +65,6 @@
 #endif
 
 extern fixed Sinewave[N_WAVE]; /* placed at end of this file for clarity */
-extern fixed Loudampl[N_LOUD];
 int db_from_ampl(fixed re, fixed im);
 fixed fix_mpy(fixed a, fixed b);
 
@@ -209,33 +208,6 @@ void fix_loud(fixed loud[], fixed fr[], fixed fi[], int n, int scale_shift)
                 if(loud[i] > max)
                         loud[i] = max;
         }
-}
-
-/*      db_from_ampl() - find loudness (in dB) from
-        the complex amplitude.
-*/
-int db_from_ampl(fixed re, fixed im)
-{
-        static long loud2[N_LOUD] = {0};
-        long v;
-        int i;
-
-        if(loud2[0] == 0) {
-                loud2[0] = (long)Loudampl[0] * (long)Loudampl[0];
-                for(i=1; i<N_LOUD; ++i) {
-                        v = (long)Loudampl[i] * (long)Loudampl[i];
-                        loud2[i] = v;
-                        loud2[i-1] = (loud2[i-1]+v) / 2;
-                }
-        }
-
-        v = (long)re * (long)re + (long)im * (long)im;
-
-        for(i=0; i<N_LOUD; ++i)
-                if(loud2[i] <= v)
-                        break;
-
-        return (-i);
 }
 
 /*
@@ -398,53 +370,4 @@ fixed Sinewave[1024] = {
   -1607,  -1406,  -1206,  -1005,   -804,   -603,   -402,   -201,
 };
 
-#if N_LOUD != 100
-        ERROR: N_LOUD != 100
-#endif
-fixed Loudampl[100] = {
-  32767,  29203,  26027,  23197,  20674,  18426,  16422,  14636,
-  13044,  11626,  10361,   9234,   8230,   7335,   6537,   5826,
-   5193,   4628,   4125,   3676,   3276,   2920,   2602,   2319,
-   2067,   1842,   1642,   1463,   1304,   1162,   1036,    923,
-    823,    733,    653,    582,    519,    462,    412,    367,
-    327,    292,    260,    231,    206,    184,    164,    146,
-    130,    116,    103,     92,     82,     73,     65,     58,
-     51,     46,     41,     36,     32,     29,     26,     23,
-     20,     18,     16,     14,     13,     11,     10,      9,
-      8,      7,      6,      5,      5,      4,      4,      3,
-      3,      2,      2,      2,      2,      1,      1,      1,
-      1,      1,      1,      0,      0,      0,      0,      0,
-      0,      0,      0,      0,
-};
-
-#ifdef  MAIN
-
-#include        <stdio.h>
-#include        <math.h>
-
-#define M       4
-#define N       (1<<M)
-
-main(){
-        fixed real[N], imag[N];
-        int     i;
-
-        for (i=0; i<N; i++){
-                real[i] = 1000*cos(i*2*3.1415926535/N);
-                imag[i] = 0;
-        }
-
-        fix_fft(real, imag, M, 0;
-
-        for (i=0; i<N; i++){
-                printf("%d: %d, %d\n", i, real[i], imag[i]);
-        }
-
-        fix_fft(real, imag, M, 1);
-
-        for (i=0; i<N; i++){
-                printf("%d: %d, %d\n", i, real[i], imag[i]);
-        }
-}
-#endif  /* MAIN */
 

@@ -39,30 +39,59 @@ Good luck and have fun!
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 // Declare the main window and two text layers
 Window *main_window;
-TextLayer *background_layer;
-TextLayer *helloWorld_layer;
 
 static void accel_data_handler(AccelData*, uint32_t);
-static int16_t values[NBSAMPLE];
 
 Layer * graph_layer;
-uint32_t accel[NBSAMPLE];
-uint32_t bigBuffer[NFFT];
-static GPoint points[SCR_WIDTH];
-static GPoint fftpoints[SCR_WIDTH];
+//static GPoint points[SCR_WIDTH];
+//static GPoint fftpoints[SCR_WIDTH];
 static short fftSamples[NFFT];
-static short fftr[NFFT];
-static short ffti[NFFT];
-static short fftmag[NFFT];
-static uint32_t max = 0, min = 0;
 static short fftn = 0;
 static uint32_t total_steps = 0;
-#define SSTEPS_SIZE 24
-char* ssteps;
+
+Layer * objective_steps_layer;
+Layer * objective_distance_layer;
+Layer * objective_calories_layer;
+
+static ActionMenu *s_action_menu;
+static ActionMenuLevel *s_root_level;
+
+
+static char s_nsteps[7];
+static char s_distance[20];
+static char s_calories[20];
+TextLayer* label_today_steps_text_layer;
+TextLayer* today_steps_text_layer ;
+TextLayer* today_distance_text_layer;
+TextLayer* today_calories_text_layer;
+TextLayer* objective_steps_text_layer;
+TextLayer* objective_distance_text_layer ;
+TextLayer* objective_calories_text_layer ;
+TextLayer* label_objective_text_layer ;
+
+// Default to the Swiss averages according to Wikipedia
+#define DEFAULT_USER_HEIGHT 178
+#define DEFAULT_USER_WEIGHT 70
+#define DEFAULT_OBJECTIVE_STEPS 10000
+#define DEFAULT_OBJECTIVE_DISTANCE 10000
+#define DEFAULT_OBJECTIVE_CALORIES 1000
+int user_height = DEFAULT_USER_HEIGHT;
+int user_weight = DEFAULT_USER_WEIGHT; 
+int objective_steps = DEFAULT_OBJECTIVE_STEPS;
+int objective_distance = DEFAULT_OBJECTIVE_DISTANCE;
+int objective_calories = DEFAULT_OBJECTIVE_CALORIES;
+
+typedef enum UserInfoEdit {
+    UserInfoEditHeight,
+    UserInfoEditWeight,
+    ObjectiveEditSteps,
+    ObjectiveEditDistance,
+    ObjectiveEditCalories
+} UserInfoEdit;
 
 // .update_proc of my_layer:
 static void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
-    GPathInfo path_info;
+  /*  GPathInfo path_info;
     GPath *path;
         
     path_info.num_points = SCR_WIDTH;
@@ -71,68 +100,426 @@ static void graph_layer_update_proc(Layer *my_layer, GContext* ctx) {
     
     graphics_context_set_stroke_color(ctx, GColorBlack);
     gpath_draw_outline_open(ctx, path);
-    gpath_destroy(path);
+    gpath_destroy(path);*/
     
-    
+    /*
     path_info.num_points = SCR_WIDTH;
     path_info.points = fftpoints;
     path = gpath_create(&path_info);
     
     graphics_context_set_stroke_color(ctx, GColorBlack);
     gpath_draw_outline_open(ctx, path);
-    gpath_destroy(path);
+    gpath_destroy(path);*/
 }
-  
 
-// Init function called when app is launched
-static void init(void) {
-    ssteps = malloc(SSTEPS_SIZE);
-    //How many samples to store before calling the callback function
-    int num_samples = NBSAMPLE;
+static void objective_layer_update_proc(Layer *my_layer, GContext* ctx, int y, int progress) {
+    const int MARGIN = 10;
+    const int PADDING = 2;
+    const int HEIGHT = 20;
     
-  	// Create main Window element and assign to pointer
-  	main_window = window_create();
-    Layer *window_layer = window_get_root_layer(main_window);  
+    int fill_width =  (SCR_WIDTH - 2 * MARGIN - 2 * PADDING) * progress / 100;
+    
+    graphics_draw_rect(ctx, GRect(MARGIN, y, SCR_WIDTH - 2 * MARGIN, HEIGHT));
+    graphics_fill_rect(ctx, GRect(MARGIN + PADDING, y + PADDING, fill_width, HEIGHT - 2 * PADDING), 0, GCornerNone);
+    
+}
+
+
+static uint32_t compute_distance(uint32_t for_steps){
+    const float walkingFactor = 0.57;
+    float strip; 
+    float distance; 
+    strip = user_height * 0.415; 
+    distance = (for_steps * strip) / 100;
+    
+    return distance;
+}
+
+static uint32_t compute_calories(uint32_t for_steps){
+    const float walkingFactor = 0.57; 
+    float caloriesBurnedPerMile; 
+    float strip; 
+    float stepCountMile; // step/mile 
+    float conversationFactor; 
+    float caloriesBurned; 
+    caloriesBurnedPerMile = walkingFactor * (user_weight * 2.2); 
+    strip = user_height * 0.415; 
+    stepCountMile = 160934.4 / strip; 
+    conversationFactor = caloriesBurnedPerMile / stepCountMile;
+    caloriesBurned = for_steps * conversationFactor;
+
+    return caloriesBurned;
+}
+
+static int get_progress_for_layer(Layer * layer){
+    if(layer == objective_steps_layer)
+        return total_steps * 100 / objective_steps;
+    else if(layer == objective_distance_layer)
+        return compute_distance(total_steps) * 100 / objective_distance;
+    else if(layer == objective_calories_layer)
+        return compute_calories(total_steps) * 100 / objective_calories;
+    else
+        return 0;
+}
+
+// update_proc for objective layers
+static void objective_steps_layer_update_proc(Layer *layer, GContext* ctx) {
+    const int PADDING = 2;
+    GRect bounds = layer_get_bounds(layer);
+    int progress = get_progress_for_layer(layer);
+    
+    int fill_width =  (bounds.size.w - 2 * PADDING) * progress / 100;
+    
+    graphics_draw_rect(ctx, GRect(0, 0, bounds.size.w, bounds.size.h));
+    graphics_fill_rect(ctx, GRect(PADDING, PADDING, fill_width, bounds.size.h - 2 * PADDING), 0, GCornerNone);
+}
+
+static void objective_distance_layer_update_proc(Layer *my_layer, GContext* ctx) {
+    objective_layer_update_proc(my_layer, ctx, 70, 66);
+}
+
+static void objective_kcal_layer_update_proc(Layer *my_layer, GContext* ctx) {
+    objective_layer_update_proc(my_layer, ctx, 130, 33);
+}
+
+
+ScrollLayer *scroll_layer;
+int state_offset = 0;
+
+int clip_value(int x, int min, int max){
+    return x < min ? min : (x > max ? max : x);
+}
+
+enum STATE_OFFSET {
+    RESET_MY_COUNT,
+    SETTINGS
+};
+
+void inc_state_offset(int n){
+    const int MIN_STATE_OFFSET = 0, MAX_STATE_OFFSET = 1;
+    state_offset = clip_value(state_offset + n, MIN_STATE_OFFSET, MAX_STATE_OFFSET);
+    int scroll_to = 0;
+    switch(state_offset){
+        case RESET_MY_COUNT:
+            scroll_to = 0;
+            break;
+        case SETTINGS:
+            scroll_to = -SCR_HEIGHT;
+            break;
+    }
+    scroll_layer_set_content_offset(scroll_layer, GPoint(0, scroll_to), true) ;
+}
+
+void down_single_click_handler(ClickRecognizerRef recognizer, void *context) {
+    Window *window = (Window *)context;
+    inc_state_offset(+1);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "DOWN");
+}
+
+void up_single_click_handler(ClickRecognizerRef recognizer, void *context) {
+    Window *window = (Window *)context;
+    inc_state_offset(-1);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "UP");
+}
+
+void select_single_click_handler(ClickRecognizerRef recognizer, void *context) {
+    Window *window = (Window *)context;
+    ActionMenuConfig config = (ActionMenuConfig) {
+        .root_level = s_root_level,
+        .align = ActionMenuAlignCenter
+    };
+
+    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "OpnEning The MeNy");
+    
+    // Show the ActionMenu
+    s_action_menu = action_menu_open(&config);
+}
+
+static void click_config_provider(Window *window){
+    window_single_click_subscribe(BUTTON_ID_DOWN, down_single_click_handler);
+    window_single_click_subscribe(BUTTON_ID_UP, up_single_click_handler);
+    window_single_click_subscribe(BUTTON_ID_SELECT, select_single_click_handler);
+}
+
+static void update_ui(void){
+    snprintf(s_nsteps, sizeof(s_nsteps), "%lu", total_steps);
+    snprintf(s_distance, sizeof(s_distance), "Distance: %lum", compute_distance(total_steps));
+    snprintf(s_calories, sizeof(s_calories), "Calories: %lukcal", compute_calories(total_steps));
+    
+    text_layer_set_text(today_steps_text_layer, s_nsteps);
+    text_layer_set_text(today_distance_text_layer, s_distance);
+    text_layer_set_text(today_calories_text_layer, s_calories);
+}
+
+static void number_window_set_user_info(NumberWindow *number_window, void* context){
+    UserInfoEdit user_info_to_edit = (UserInfoEdit)context;
+    int value = number_window_get_value(number_window);
+    
+    switch(user_info_to_edit){
+        case ObjectiveEditSteps:
+            objective_steps = value;
+            break;
+        case ObjectiveEditDistance:
+            objective_distance = value;
+            break;
+        case ObjectiveEditCalories:
+            objective_calories = value;
+            break;
+        case UserInfoEditWeight:
+            user_weight = value;
+            break;
+        case UserInfoEditHeight:
+            user_height = value;
+            break;
+    }
+    window_stack_remove((Window*)number_window, true);
+    number_window_destroy(number_window);
+    update_ui();
+}
+
+static void action_clear(ActionMenu *action_menu, const ActionMenuItem *action, void *context) {
+    user_height = DEFAULT_USER_HEIGHT;
+    user_weight = DEFAULT_USER_WEIGHT; 
+    objective_steps = DEFAULT_OBJECTIVE_STEPS;
+    objective_distance = DEFAULT_OBJECTIVE_DISTANCE;
+    objective_calories = DEFAULT_OBJECTIVE_CALORIES;
+    total_steps = 0;
+    update_ui();
+}
+
+static void action_edit_info(ActionMenu *action_menu, const ActionMenuItem *action, void *context){
+    UserInfoEdit user_info_to_edit = (UserInfoEdit)action_menu_item_get_action_data(action);
+    
+    NumberWindowCallbacks callbacks = {
+        .incremented = NULL,
+        .decremented = NULL,
+        .selected = number_window_set_user_info
+    };
+    
+    char * label;
+    int value;
+    switch(user_info_to_edit){
+        case ObjectiveEditSteps:
+            label = "Steps";
+            value = objective_steps;
+            break;
+        case ObjectiveEditDistance:
+            label = "Distance (m)";
+            value = objective_distance;
+            break;
+        case ObjectiveEditCalories:
+            label = "Calories";
+            value = objective_calories;
+            break;
+        case UserInfoEditHeight:
+            label = "Height (cm)";
+            value = user_height;
+            break;
+        case UserInfoEditWeight:
+        default:
+            label = "Weight (kg)";
+            user_info_to_edit = UserInfoEditWeight;
+            value = user_weight;
+            break;
+    }
+    
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "ATTEMPT tO CREATE WINDOW");
+    
+    NumberWindow* number_window = number_window_create(label, callbacks, (void *) user_info_to_edit); 
+    number_window_set_min(number_window, 0);
+    number_window_set_value(number_window, value);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "ATTEMPT tO Push WINDOW");
+
+    window_stack_push((Window*)number_window, false);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "YEAH");
+}
+
+static void init_ui(Window *window){
+    // Create main Window element and assign to pointer
+    Layer *root_layer = window_get_root_layer(main_window);  
+    
+    // Create scroll layer
+    scroll_layer = scroll_layer_create(GRect(0, 0, SCR_WIDTH, SCR_HEIGHT));
+    layer_add_child(root_layer, scroll_layer_get_layer(scroll_layer));
+    scroll_layer_set_content_size(scroll_layer, GSize(SCR_WIDTH, SCR_HEIGHT * 2));
     
     // Create graph layer
-    graph_layer = layer_create(GRect(0, 0, 144, 168));    
+    graph_layer = layer_create(GRect(0, 0, SCR_WIDTH, SCR_HEIGHT));    
     layer_set_update_proc(graph_layer, graph_layer_update_proc);   
-    layer_add_child(window_layer, graph_layer);
+    scroll_layer_add_child(scroll_layer, graph_layer);
 
-    // Create text layer
-    ssteps = "NOSTEPS";
-    helloWorld_layer = text_layer_create(GRect(0, 50, 144, 25));
+    // Create today's steps text layer
+    /*ssteps = "NOSTEPS";
+    label_today_steps_text_layer = text_layer_create(GRect(0, 0, SCR_WIDTH, 25));
     snprintf(ssteps, SSTEPS_SIZE, "%lu", total_steps);
     text_layer_set_text(helloWorld_layer, ssteps);
     text_layer_set_text_alignment(helloWorld_layer, GTextAlignmentRight);
-    layer_add_child(window_layer, text_layer_get_layer(helloWorld_layer));
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(helloWorld_layer));*/
     
+    // helpers
+    int y = 0;
+    int height = 0;
+    // STEPS.............................
+    height = 40;
+    label_today_steps_text_layer = text_layer_create(GRect(0, y, SCR_WIDTH, height));
+    y += height;
+    text_layer_set_text(label_today_steps_text_layer, "Steps");
+    text_layer_set_font(label_today_steps_text_layer, fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK));
+    text_layer_set_text_alignment(label_today_steps_text_layer, GTextAlignmentCenter);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(label_today_steps_text_layer));
+    
+    height = 40;
+    today_steps_text_layer = text_layer_create(GRect(0,  y, SCR_WIDTH, height));
+    y += height;
+    text_layer_set_text(today_steps_text_layer, s_nsteps);
+    text_layer_set_font(today_steps_text_layer, fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK));
+    text_layer_set_text_alignment(today_steps_text_layer, GTextAlignmentCenter);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(today_steps_text_layer));
+    
+    // DISTANCE............................
+    height = 30;
+    today_distance_text_layer = text_layer_create(GRect(0, y, SCR_WIDTH, height));
+    y += height;
+    text_layer_set_text(today_distance_text_layer, s_distance);
+    text_layer_set_font(today_distance_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+    text_layer_set_text_alignment(today_distance_text_layer, GTextAlignmentCenter);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(today_distance_text_layer));
+    
+    // CALORIES............................
+    height = 30;
+    today_calories_text_layer = text_layer_create(GRect(0, y, SCR_WIDTH, height));
+    y += height;
+    text_layer_set_text(today_calories_text_layer, s_calories);
+    text_layer_set_font(today_calories_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+    text_layer_set_text_alignment(today_calories_text_layer, GTextAlignmentCenter);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(today_calories_text_layer));
+    
+    // Create step objective layer. --------
+    objective_steps_layer = layer_create(GRect(10, SCR_HEIGHT + 25, SCR_WIDTH - 20, 10));
+    layer_set_update_proc(objective_steps_layer, objective_steps_layer_update_proc);
+    scroll_layer_add_child(scroll_layer, objective_steps_layer);
+    objective_steps_text_layer = text_layer_create(GRect(10, SCR_HEIGHT + 35, SCR_WIDTH - 20, 16));
+    text_layer_set_text(objective_steps_text_layer, "% Steps");
+    text_layer_set_font(objective_steps_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    text_layer_set_text_alignment(objective_steps_text_layer, GTextAlignmentRight);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(objective_steps_text_layer));
+    
+    // Create distance objective layer. --------
+    objective_distance_layer = layer_create(GRect(10, SCR_HEIGHT + 61, SCR_WIDTH - 20, 10));
+    layer_set_update_proc(objective_distance_layer, objective_steps_layer_update_proc);
+    scroll_layer_add_child(scroll_layer, objective_distance_layer);
+    objective_distance_text_layer = text_layer_create(GRect(10, SCR_HEIGHT + 71, SCR_WIDTH - 20, 16));
+    text_layer_set_text(objective_distance_text_layer, "% Distance");
+    text_layer_set_font(objective_distance_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    text_layer_set_text_alignment(objective_distance_text_layer, GTextAlignmentRight);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(objective_distance_text_layer));
+    
+    // Create calories objective layer. --------
+    objective_calories_layer = layer_create(GRect(10, SCR_HEIGHT + 97, SCR_WIDTH - 20, 10));
+    layer_set_update_proc(objective_calories_layer, objective_steps_layer_update_proc);
+    scroll_layer_add_child(scroll_layer, objective_calories_layer);
+    objective_calories_text_layer = text_layer_create(GRect(10, SCR_HEIGHT + 107, SCR_WIDTH - 20, 16));
+    text_layer_set_text(objective_calories_text_layer, "% Calories");
+    text_layer_set_font(objective_calories_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+    text_layer_set_text_alignment(objective_calories_text_layer, GTextAlignmentRight);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(objective_calories_text_layer));
+    
+    // big OBJECTIVE
+    label_objective_text_layer = text_layer_create(GRect(10, 2 * SCR_HEIGHT - 35, SCR_WIDTH - 20, 35));
+    text_layer_set_text(label_objective_text_layer, "Objectives");
+    text_layer_set_font(label_objective_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+    text_layer_set_text_alignment(label_objective_text_layer, GTextAlignmentRight);
+    scroll_layer_add_child(scroll_layer, text_layer_get_layer(label_objective_text_layer));
+    
+    // Action menu levels
+    ActionMenuLevel *s_clear_all_level       = action_menu_level_create(1);
+    ActionMenuLevel *s_edit_info_level       = action_menu_level_create(2);
+    ActionMenuLevel *s_edit_objectives_level = action_menu_level_create(3);
+    s_root_level                             = action_menu_level_create(3);
+    
+    // Root level
+    action_menu_level_add_child(s_root_level, s_edit_info_level, "Edit Info");
+    action_menu_level_add_child(s_root_level, s_edit_objectives_level, "Objectives");
+    action_menu_level_add_child(s_root_level, s_clear_all_level, "Clear All");
+
+    // Root level
+    //// Edit Info level 
+    action_menu_level_add_action(s_edit_info_level, "Height", action_edit_info, (void *)UserInfoEditHeight);
+    action_menu_level_add_action(s_edit_info_level, "Weight", action_edit_info, (void *)UserInfoEditWeight);
+    
+    // Root level
+    //// Objectives level
+    action_menu_level_add_action(s_edit_objectives_level, "Steps", action_edit_info, (void *)ObjectiveEditSteps);
+    action_menu_level_add_action(s_edit_objectives_level, "Distance", action_edit_info, (void *)ObjectiveEditDistance);
+    action_menu_level_add_action(s_edit_objectives_level, "Calories", action_edit_info, (void *)ObjectiveEditCalories);
+    
+    // Root level
+    //// Clear all level
+    action_menu_level_add_action(s_clear_all_level, "Confirm", action_clear, (void *)NULL);
+    
+    
+    // Button click handler
+    window_set_click_config_provider(main_window, (ClickConfigProvider) click_config_provider);
+    
+    update_ui();
+}
+
+static void deinit_ui(Window *window) { 
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "DEINIT_I");
+    // Destroy layers and main window 
+    text_layer_destroy(label_today_steps_text_layer);
+    text_layer_destroy(today_steps_text_layer);
+    text_layer_destroy(today_distance_text_layer);
+    text_layer_destroy(today_calories_text_layer);
+    text_layer_destroy(objective_steps_text_layer);
+    text_layer_destroy(objective_distance_text_layer);
+    text_layer_destroy(objective_calories_text_layer);
+    text_layer_destroy(label_objective_text_layer);
+    
+    layer_destroy(objective_steps_layer);
+    layer_destroy(objective_distance_layer);
+    layer_destroy(objective_calories_layer);
+    
+    action_menu_hierarchy_destroy(s_root_level, NULL, NULL);
+}
+
+// Init function called when app is launched
+static void init(void) {
+    memset(fftSamples, 0,  sizeof(fftSamples));
+    
+    main_window = window_create();
+    
+    window_set_window_handlers(main_window, (WindowHandlers) {
+        .load = init_ui,
+        .unload = deinit_ui,
+    });
+        
   	// Show the window on the watch, with animated = true
   	window_stack_push(main_window, true);
-  
+
     // Allow accelerometer event
     accel_data_service_subscribe(NBSAMPLE, accel_data_handler);
     
     //Define sampling rate
     accel_service_set_sampling_rate(ACCEL_SAMPLING_FREQUENCY);
-    
-    memset(fftSamples, 0,  sizeof(fftr));
-    memset(fftr, 0,  sizeof(fftr));
-    memset(ffti, 0,  sizeof(fftr));
-    
-    // Add a logging meassage (for debug)
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "Just write my first app!");
 }
 
 // deinit function called when the app is closed
 static void deinit(void) {
   
     // Destroy layers and main window 
-    text_layer_destroy(background_layer);
-    text_layer_destroy(helloWorld_layer);
-    window_destroy(main_window);
+    text_layer_destroy(label_today_steps_text_layer);
+    text_layer_destroy(today_steps_text_layer);
+    text_layer_destroy(today_distance_text_layer);
+    text_layer_destroy(today_calories_text_layer);
+    text_layer_destroy(objective_steps_text_layer);
+    text_layer_destroy(objective_distance_text_layer);
+    text_layer_destroy(objective_calories_text_layer);
+    text_layer_destroy(label_objective_text_layer);
+    action_menu_hierarchy_destroy(s_root_level, NULL, NULL);
     
-    free(ssteps);
+    window_destroy(main_window);
 }
 
 float my_sqrt(float num){
@@ -149,8 +536,6 @@ float my_sqrt(float num){
     return a;
 }
 
-
-        
 typedef struct {
     int count;
     int centroid;
@@ -172,6 +557,10 @@ int compar (const void* a, const void* b){
 }
 
 static void accel_data_handler(AccelData *data, uint32_t num_samples) {
+    
+    uint32_t max = 0, min = 0;
+    uint32_t accel[NBSAMPLE];
+    
     for(uint32_t i = 0; i < NBSAMPLE; i++){
         accel[i] = data[i].x * data[i].x + data[i].y * data[i].y + data[i].z * data[i].z;
         if(max == 0 || max < accel[i]){
@@ -183,7 +572,7 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     }
         
     // Shift points NBSAMPLE to the left
-    memmove(points, &(points[NBSAMPLE]), sizeof(points));
+//    memmove(points, &(points[NBSAMPLE]), sizeof(points));
     memmove(fftSamples, &(fftSamples[NBSAMPLE]), sizeof(fftSamples));
     
     //Normalize (max: 168)
@@ -196,21 +585,26 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
     for (uint32_t i = 0; i < NBSAMPLE; i++){
      //   APP_LOG(APP_LOG_LEVEL_DEBUG, "SEGFAULT %lu %lu", NFFT - (NBSAMPLE - i) - 1, SCR_WIDTH - (NBSAMPLE - i) - 1);
         fftSamples[NFFT - (NBSAMPLE - i)] = accel[i] * 32768.0 * 2.0 / 4294967296.0 * 10;
-        points[SCR_WIDTH - (NBSAMPLE - i)].y = SCR_HEIGHT - accel[i] * 32768.0 * 2.0 / 4294967296.0;
+    //    points[SCR_WIDTH - (NBSAMPLE - i)].y = SCR_HEIGHT - (25 * (accel[i] - min)) / (max - min)  ;
     }
     
     // Shift points
     for(uint32_t i = 0; i < SCR_WIDTH; i++){
     //    APP_LOG(APP_LOG_LEVEL_DEBUG, "SEGFAULT 2 %lu", i);
-        points[i].x = i;
+ //       points[i].x = i;
     }
     
     fftn += NBSAMPLE;
     
     // if 1024 samples have been collected
     if(fftn >= 1024){
+        short * fftr = calloc(NFFT, sizeof(short));
+        short * ffti = calloc(NFFT, sizeof(short));
+        
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "ALGO STARTED");
         // Copy fftsamples to fftr
         memcpy(fftr, fftSamples, sizeof(fftSamples));
+        memset(ffti, 0, sizeof(fftSamples));
         
         // Perform FFT
         fix_fft(fftr, ffti, MFFT, 0);
@@ -230,7 +624,6 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
         // Compute mean and variance
         short mean = xsum * 2 / NFFT;
         short sigma = (short) my_sqrt((x2sum - xsum*xsum/(NFFT/2))/((NFFT/2) + 1));
-        //APP_LOG(APP_LOG_LEVEL_DEBUG, "max=%d mu=%d s=%d sum=%lu ssum=%lu", max_fftr, mean, sigma, xsum, x2sum);
         
         // Remove all frequencies below mean+sigma (~70% of frequencies);
         for(uint32_t i = 1; i < NFFT/2; i++){
@@ -239,8 +632,11 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
             }
         }
         
+        free(fftr);
+        free(ffti);
+        
         // Show points
-        for(uint32_t i = 0; i < SCR_WIDTH; i++){
+     /*   for(uint32_t i = 0; i < SCR_WIDTH; i++){
             short max_mag = 0;
             for(uint32_t j = i * 4; j < (i + 1) * 4 && j < NFFT / 2; j++){
                 if(fftr[j] > max_mag){
@@ -250,7 +646,7 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
             fftpoints[i].x = i;
             fftpoints[i].y = max_mag * SCR_HEIGHT * 0.5 / max_fftr;
         }
-        
+       */ 
         // Find the max frequency between 1.5Hz and 2.5Hz
         short max2i = 0;
         //for(short i = 1.5 * NFFT / 100.0; i < 2.5 * NFFT / 100.0; i++){
@@ -265,7 +661,11 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
         short steps = 0;
         
         int peakNSup = 0;
+
+        fftn = 0;   
+        
         if(max2i >  1 * NFFT / ACCEL_SAMPLING_FREQUENCY && max2i <  3 * NFFT / ACCEL_SAMPLING_FREQUENCY){
+            APP_LOG(APP_LOG_LEVEL_DEBUG, "ALGO STARTED 88888");
             // Find the walking time
             // Find maximums
             #define MAX_COUNT 30
@@ -301,10 +701,9 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
          //   sigma2 = my_sqrt((ssum2-(sum2*sum2))/(nbIndex-1));
          //   sigma2 = 100000;
             //APP_LOG(APP_LOG_LEVEL_DEBUG, "sum %lu mean %lu mean+sigma %lu mean-sigma %lu sigma %lu", sum, mean, mean2+sigma, mean-sigma, sigma);
-            
             // clustering
             #define CENTROID_COUNT 4
-            #define C_MAX_ITERATION_COUNT 20
+            #define C_MAX_ITERATION_COUNT 10
             int centroids [CENTROID_COUNT];    // 4 clusters
             // initialize centroids:
             for (int i = 0; i < CENTROID_COUNT; i++){
@@ -408,17 +807,16 @@ static void accel_data_handler(AccelData *data, uint32_t num_samples) {
             #define END_SPRINTF "%lu(%d/%d+%d=%d(%d|%d", total_steps, max2i, (int)(max2Hz*10), steps, peakNSup, (int) walktime, fftr[max2i]
             if(max2i > 1.5 * NFFT / ACCEL_SAMPLING_FREQUENCY){
                 total_steps += peakNSup;
-                text_layer_set_text(helloWorld_layer, ssteps);
+          //      text_layer_set_text(helloWorld_layer, ssteps);
+                update_ui();
             }
             APP_LOG(APP_LOG_LEVEL_DEBUG, END_SPRINTF);
 
         }
-        snprintf(ssteps, SSTEPS_SIZE, END_SPRINTF);
 
-        fftn = 0;
         //vibes_short_pulse();
     }
-    layer_mark_dirty(graph_layer);
+    //layer_mark_dirty(graph_layer);
 }
 
 int main(void) {
