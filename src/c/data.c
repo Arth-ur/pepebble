@@ -116,8 +116,8 @@ int data_get_objective_calories(UserInfo* info){
     return info->objective_calories;
 }
 
+// Source: http://fitness.stackexchange.com/questions/25472/how-to-calculate-calorie-from-pedometer
 int data_compute_distance(UserInfo* info){
-    const float walkingFactor = 0.57;
     float strip; 
     float distance; 
     strip = info->height * 0.415; 
@@ -126,6 +126,7 @@ int data_compute_distance(UserInfo* info){
     return distance;
 }
 
+// Source: http://fitness.stackexchange.com/questions/25472/how-to-calculate-calorie-from-pedometer
 int data_compute_calories(UserInfo* info){
     const float walkingFactor = 0.57; 
     float caloriesBurnedPerMile; 
