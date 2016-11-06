@@ -65,7 +65,6 @@
 #endif
 
 extern fixed Sinewave[N_WAVE]; /* placed at end of this file for clarity */
-int db_from_ampl(fixed re, fixed im);
 fixed fix_mpy(fixed a, fixed b);
 
 /*
@@ -173,42 +172,7 @@ fix_mpy(wi,fr[j]);
 }
 
 
-/*      window() - apply a Hanning window       */
-void window(fixed fr[], int n)
-{
-        int i,j,k;
 
-        j = N_WAVE/n;
-        n >>= 1;
-        for(i=0,k=N_WAVE/4; i<n; ++i,k+=j)
-                FIX_MPY(fr[i],fr[i],16384-(Sinewave[k]>>1));
-        n <<= 1;
-        for(k-=j; i<n; ++i,k-=j)
-                FIX_MPY(fr[i],fr[i],16384-(Sinewave[k]>>1));
-}
-
-/*      fix_loud() - compute loudness of freq-spectrum components.
-        n should be ntot/2, where ntot was passed to fix_fft();
-        6 dB is added to account for the omitted alias components.
-        scale_shift should be the result of fix_fft(), if the time-series
-        was obtained from an inverse FFT, 0 otherwise.
-        loud[] is the loudness, in dB wrt 32767; will be +10 to -N_LOUD.
-*/
-void fix_loud(fixed loud[], fixed fr[], fixed fi[], int n, int scale_shift)
-{
-        int i, max;
-
-        max = 0;
-        if(scale_shift > 0)
-                max = 10;
-        scale_shift = (scale_shift+1) * 6;
-
-        for(i=0; i<n; ++i) {
-                loud[i] = db_from_ampl(fr[i],fi[i]) + scale_shift;
-                if(loud[i] > max)
-                        loud[i] = max;
-        }
-}
 
 /*
         fix_mpy() - fixed-point multiplication
@@ -217,22 +181,6 @@ fixed fix_mpy(fixed a, fixed b)
 {
         FIX_MPY(a,a,b);
         return a;
-}
-
-/*
-        iscale() - scale an integer value by (numer/denom)
-*/
-int iscale(int value, int numer, int denom)
-{
-#ifdef  DOS
-        asm     mov ax,value
-        asm     imul WORD PTR numer
-        asm     idiv WORD PTR denom
-
-        return _AX;
-#else
-                return (long) value * (long)numer/(long)denom;
-#endif
 }
 
 #if N_WAVE != 1024
